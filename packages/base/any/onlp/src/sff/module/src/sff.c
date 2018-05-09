@@ -28,6 +28,7 @@
 #include <sff/8636.h>
 #include "sff_log.h"
 #include <ctype.h>
+#include "sff_int.h"
 
 sff_sfp_type_t
 sff_sfp_type_get(const uint8_t* eeprom)
@@ -75,6 +76,11 @@ sff_module_type_get(const uint8_t* eeprom)
         && SFF8636_MEDIA_EXTENDED(eeprom)
         && SFF8636_MEDIA_100GE_CWDM4(eeprom))
         return SFF_MODULE_TYPE_100G_CWDM4;
+
+    if (SFF8636_MODULE_QSFP28(eeprom)
+        && SFF8636_MEDIA_EXTENDED(eeprom)
+        && SFF8636_MEDIA_100GE_PSM4(eeprom))
+        return SFF_MODULE_TYPE_100G_PSM4;
 
     if (SFF8436_MODULE_QSFP_PLUS_V2(eeprom)
         && SFF8436_MEDIA_40GE_CR4(eeprom))
@@ -138,6 +144,26 @@ sff_module_type_get(const uint8_t* eeprom)
     }
 
     if (SFF8472_MODULE_SFP(eeprom)
+        && _sff8472_media_sfp28_cr(eeprom)) {
+        return SFF_MODULE_TYPE_25G_BASE_CR;
+    }
+
+    if (SFF8472_MODULE_SFP(eeprom)
+        && _sff8472_media_sfp28_sr(eeprom)) {
+        return SFF_MODULE_TYPE_25G_BASE_SR;
+    }
+
+    if (SFF8472_MODULE_SFP(eeprom)
+        && _sff8472_media_sfp28_lr(eeprom)) {
+        return SFF_MODULE_TYPE_25G_BASE_LR;
+    }
+
+    if (SFF8472_MODULE_SFP(eeprom)
+        && _sff8472_media_sfp28_aoc(eeprom)) {
+        return SFF_MODULE_TYPE_25G_BASE_AOC;
+    }
+
+    if (SFF8472_MODULE_SFP(eeprom)
         && SFF8472_MEDIA_XGE_SR(eeprom)
         && !_sff8472_media_gbe_sx_fc_hack(eeprom))
         return SFF_MODULE_TYPE_10G_BASE_SR;
@@ -175,11 +201,6 @@ sff_module_type_get(const uint8_t* eeprom)
             return SFF_MODULE_TYPE_10G_BASE_SR;
         else
             return SFF_MODULE_TYPE_10G_BASE_CR;
-    }
-
-    if (SFF8472_MODULE_SFP(eeprom)
-        && _sff8472_media_sfp28_cr(eeprom)) {
-        return SFF_MODULE_TYPE_25G_BASE_CR;
     }
 
     if (SFF8472_MODULE_SFP(eeprom)
@@ -241,6 +262,7 @@ sff_media_type_get(sff_module_type_t mt)
         case SFF_MODULE_TYPE_100G_BASE_SR4:
         case SFF_MODULE_TYPE_100G_BASE_LR4:
         case SFF_MODULE_TYPE_100G_CWDM4:
+        case SFF_MODULE_TYPE_100G_PSM4:
         case SFF_MODULE_TYPE_40G_BASE_SR4:
         case SFF_MODULE_TYPE_40G_BASE_LR4:
         case SFF_MODULE_TYPE_40G_BASE_LM4:
@@ -248,6 +270,9 @@ sff_media_type_get(sff_module_type_t mt)
         case SFF_MODULE_TYPE_40G_BASE_SR2:
         case SFF_MODULE_TYPE_40G_BASE_SM4:
         case SFF_MODULE_TYPE_40G_BASE_ER4:
+        case SFF_MODULE_TYPE_25G_BASE_SR:
+        case SFF_MODULE_TYPE_25G_BASE_LR:
+        case SFF_MODULE_TYPE_25G_BASE_AOC:
         case SFF_MODULE_TYPE_10G_BASE_SR:
         case SFF_MODULE_TYPE_10G_BASE_LR:
         case SFF_MODULE_TYPE_10G_BASE_LRM:
@@ -286,6 +311,7 @@ sff_module_caps_get(sff_module_type_t mt, uint32_t *caps)
         case SFF_MODULE_TYPE_100G_BASE_LR4:
         case SFF_MODULE_TYPE_100G_BASE_CR4:
         case SFF_MODULE_TYPE_100G_CWDM4:
+        case SFF_MODULE_TYPE_100G_PSM4:
             *caps |= SFF_MODULE_CAPS_F_100G;
             return 0;
 
@@ -302,6 +328,8 @@ sff_module_caps_get(sff_module_type_t mt, uint32_t *caps)
             return 0;
 
         case SFF_MODULE_TYPE_25G_BASE_CR:
+        case SFF_MODULE_TYPE_25G_BASE_SR:
+        case SFF_MODULE_TYPE_25G_BASE_AOC:
             *caps |= SFF_MODULE_CAPS_F_25G;
             return 0;
 
@@ -457,6 +485,7 @@ sff_eeprom_parse_standard__(sff_eeprom_t* se, uint8_t* eeprom)
                     se->info.length = se->eeprom[146];
                     break;
                 case SFF_SFP_TYPE_SFP:
+                case SFF_SFP_TYPE_SFP28:
                     se->info.length = se->eeprom[18];
                     break;
                 default:
@@ -474,6 +503,7 @@ sff_eeprom_parse_standard__(sff_eeprom_t* se, uint8_t* eeprom)
                     break;
                 case SFF_SFP_TYPE_QSFP_PLUS:
                 case SFF_SFP_TYPE_SFP:
+                case SFF_SFP_TYPE_SFP28:
                     aoc_length = _sff8436_qsfp_40g_aoc_length(se->eeprom);
                     if (aoc_length < 0)
                         aoc_length = _sff8472_sfp_10g_aoc_length(se->eeprom);
@@ -651,6 +681,14 @@ sff_eeprom_parse_nonstandard__(sff_eeprom_t* se, uint8_t* eeprom)
                      se->info.length);
         return 0;
     }
+
+    if (sff_nonstandard_lookup(&se->info) == 0) {
+        se->identified = 1;
+        SFF_SNPRINTF(se->info.length_desc, sizeof(se->info.length_desc), "%dm",
+                     se->info.length);
+        return 0;
+    }
+
     return -1;
 }
 
@@ -677,6 +715,7 @@ sff_info_init(sff_info_t* info, sff_module_type_t mt,
         case SFF_MODULE_TYPE_100G_BASE_SR4:
         case SFF_MODULE_TYPE_100G_BASE_LR4:
         case SFF_MODULE_TYPE_100G_CWDM4:
+        case SFF_MODULE_TYPE_100G_PSM4:
             info->sfp_type = SFF_SFP_TYPE_QSFP28;
             info->media_type = SFF_MEDIA_TYPE_FIBER;
             info->caps = SFF_MODULE_CAPS_F_100G;
@@ -709,8 +748,16 @@ sff_info_init(sff_info_t* info, sff_module_type_t mt,
             break;
 
         case SFF_MODULE_TYPE_25G_BASE_CR:
-            info->sfp_type = SFF_SFP_TYPE_SFP;
+            info->sfp_type = SFF_SFP_TYPE_SFP28;
             info->media_type = SFF_MEDIA_TYPE_COPPER;
+            info->caps = SFF_MODULE_CAPS_F_25G;
+            break;
+
+        case SFF_MODULE_TYPE_25G_BASE_SR:
+        case SFF_MODULE_TYPE_25G_BASE_LR:
+        case SFF_MODULE_TYPE_25G_BASE_AOC:
+            info->sfp_type = SFF_SFP_TYPE_SFP28;
+            info->media_type = SFF_MEDIA_TYPE_FIBER;
             info->caps = SFF_MODULE_CAPS_F_25G;
             break;
 
@@ -735,10 +782,15 @@ sff_info_init(sff_info_t* info, sff_module_type_t mt,
 
         case SFF_MODULE_TYPE_1G_BASE_SX:
         case SFF_MODULE_TYPE_1G_BASE_LX:
+            info->sfp_type = SFF_SFP_TYPE_SFP;
+            info->media_type = SFF_MEDIA_TYPE_FIBER;
+            info->caps = SFF_MODULE_CAPS_F_1G;
+            break;
+
         case SFF_MODULE_TYPE_1G_BASE_CX:
         case SFF_MODULE_TYPE_1G_BASE_T:
             info->sfp_type = SFF_SFP_TYPE_SFP;
-            info->media_type = SFF_MEDIA_TYPE_FIBER;
+            info->media_type = SFF_MEDIA_TYPE_COPPER;
             info->caps = SFF_MODULE_CAPS_F_1G;
             break;
 
